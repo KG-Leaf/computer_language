@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>File ⇄ Binary Converter (single HTML)</title>
+  <style>
+    :root{--bg:#0f1724;--card:#0b1220;--accent:#7dd3fc;--muted:#94a3b8;--glass: rgba(255,255,255,0.03)}
+    html,body{height:100%;margin:0;background:linear-gradient(180deg,#071023,#0b1220);font-family:Inter,Segoe UI,Arial,sans-serif;color:#e6eef8}
+    .wrap{max-width:980px;margin:28px auto;padding:20px;border-radius:12px;background:linear-gradient(180deg,rgba(255,255,255,0.02),transparent);box-shadow:0 6px 30px rgba(2,6,23,0.6)}
+    h1{margin:0 0 12px;font-size:20px}
+    p.lead{margin:0 0 18px;color:var(--muted)}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+    .card{background:var(--card);padding:14px;border-radius:10px;border:1px solid rgba(255,255,255,0.03)}
+    .drop{border:2px dashed rgba(125,211,252,0.12);padding:18px;border-radius:8px;text-align:center;cursor:pointer}
+    input[type=file]{display:none}
+    textarea{width:100%;height:260px;background:transparent;border:1px solid rgba(255,255,255,0.03);resize:vertical;padding:10px;color:#dff3ff;font-family:monospace}
+    .row{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+    button{background:var(--accent);border:none;padding:8px 12px;border-radius:8px;cursor:pointer;color:#012;box-shadow:0 4px 10px rgba(0,0,0,0.3)}
+    small{color:var(--muted)}
+    .meta{display:flex;justify-content:space-between;align-items:center;gap:8px}
+    .full{grid-column:1/-1}
+    label.input{display:block}
+    input.text{width:100%;padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,0.03);background:transparent;color:#e6eef8}
+    @media(max-width:800px){.grid{grid-template-columns:1fr}.card{padding:12px}}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>File ⇄ Binary Converter (single HTML)</h1>
+    <p class="lead">Upload any file, view its binary representation, copy/save the binary, then paste or load it back to reconstruct and save the original file — all done locally (no internet).</p>
+
+    <div class="grid">
+      <div class="card">
+        <div class="drop" id="drop">Click or drop a file here to upload<br><small id="dropHint">Supported: any file — images, pdf, zip, etc.</small></div>
+        <input id="fileInput" type="file" />
+        <div class="meta" style="margin-top:12px">
+          <div>
+            <strong id="fileName">No file</strong><br><small id="fileSize"></small>
+          </div>
+          <div>
+            <button id="toBinaryBtn" disabled>Convert to Binary</button>
+            <button id="saveBinBtn" disabled>Save Binary (.txt)</button>
+          </div>
+        </div>
+        <div class="row" style="margin-top:12px">
+          <button id="copyBinBtn" disabled>Copy Binary</button>
+          <button id="clearBtn">Clear</button>
+        </div>
+        <p style="margin-top:10px"><small>Tip: Large files create very large binary text. For practicality, try files under ~5 MB in the browser.</small></p>
+      </div>
+
+      <div class="card">
+        <label><strong>Binary output</strong> <small style="color:var(--muted)"> (bytes as 8-bit groups separated by spaces)</small></label>
+        <textarea id="binaryArea" placeholder="Binary will appear here..." readonly></textarea>
+        <div class="row" style="margin-top:8px">
+          <button id="reconstructBtn">Reconstruct & Save</button>
+        </div>
+        <div style="margin-top:8px">
+          <label class="input">Filename when reconstructing (if lost or different):
+            <input class="text" id="reconName" placeholder="example.pdf" />
+          </label>
+        </div>
+      </div>
+
+      <div class="card full">
+        <label><strong>Paste or load binary here to convert back</strong></label>
+        <textarea id="pasteArea" placeholder="Paste binary text you copied earlier, or load a .txt binary file using the 'Load Binary File' button"></textarea>
+        <div class="row" style="margin-top:8px">
+          <input id="loadBin" type="file" accept="text/*" />
+          <button id="loadBinBtn">Load Binary File</button>
+          <button id="convertPasteBtn">Convert Pasted Binary → Save File</button>
+          <small style="align-self:center;color:var(--muted)">If original filename unavailable, set one above.</small>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+  // Small single-file app. All operations are client-side (no network).
+  const drop = document.getElementById('drop');
+  const fileInput = document.getElementById('fileInput');
+  const fileNameEl = document.getElementById('fileName');
+  const fileSizeEl = document.getElementById('fileSize');
+  const toBinaryBtn = document.getElementById('toBinaryBtn');
+  const binaryArea = document.getElementById('binaryArea');
+  const copyBinBtn = document.getElementById('copyBinBtn');
+  const reconstructBtn = document.getElementById('reconstructBtn');
+  const reconName = document.getElementById('reconName');
+  const clearBtn = document.getElementById('clearBtn');
+  const saveBinBtn = document.getElementById('saveBinBtn');
+  const pasteArea = document.getElementById('pasteArea');
+  const loadBin = document.getElementById('loadBin');
+  const loadBinBtn = document.getElementById('loadBinBtn');
+  const convertPasteBtn = document.getElementById('convertPasteBtn');
+
+  let currentFile = null;
+  let currentBinary = '';
+
+  function humanFileSize(bytes) {
+    const i = bytes==0?0:Math.floor(Math.log(bytes)/Math.log(1024));
+    const sizes = ['B','KB','MB','GB','TB'];
+    return (bytes/Math.pow(1024,i)).toFixed(2)*1 + ' ' + sizes[i];
+  }
+
+  drop.addEventListener('click', ()=> fileInput.click());
+  drop.addEventListener('dragover', e=>{ e.preventDefault(); drop.style.borderColor='rgba(125,211,252,0.5)'; });
+  drop.addEventListener('dragleave', e=>{ e.preventDefault(); drop.style.borderColor=''; });
+  drop.addEventListener('drop', e=>{
+    e.preventDefault(); drop.style.borderColor='';
+    if(e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+  });
+
+  fileInput.addEventListener('change', e=>{ if(e.target.files.length) handleFile(e.target.files[0]); });
+
+  function handleFile(file){
+    currentFile = file;
+    fileNameEl.textContent = file.name;
+    fileSizeEl.textContent = humanFileSize(file.size);
+    toBinaryBtn.disabled = false;
+    copyBinBtn.disabled = true;
+    saveBinBtn.disabled = true;
+    binaryArea.value = '';
+    currentBinary = '';
+    reconName.value = file.name;
+  }
+
+  // Convert to binary (8-bit per byte, space separated)
+  toBinaryBtn.addEventListener('click', async ()=>{
+    if(!currentFile) return;
+    try{
+      toBinaryBtn.disabled = true;
+      toBinaryBtn.textContent = 'Converting...';
+      const ab = await currentFile.arrayBuffer();
+      const u8 = new Uint8Array(ab);
+      // Build binary in chunks to avoid slow string concat for big files
+      const CHUNK = 100000; // bytes per iteration
+      let parts = [];
+      for(let i=0;i<u8.length;i++){
+        const b = u8[i].toString(2).padStart(8,'0');
+        parts.push(b);
+        if(parts.length >= CHUNK){ parts.push('\n'); }
+      }
+      // join with spaces for readability
+      currentBinary = parts.join(' ');
+      // Compress consecutive whitespace (if any) and normalize newlines
+      currentBinary = currentBinary.replace(/[ ]+\n[ ]*/g,'\n');
+      binaryArea.value = currentBinary;
+      copyBinBtn.disabled = false;
+      saveBinBtn.disabled = false;
+    }catch(err){
+      alert('Error while converting: '+err.message);
+    }finally{
+      toBinaryBtn.disabled = false;
+      toBinaryBtn.textContent = 'Convert to Binary';
+    }
+  });
+
+  copyBinBtn.addEventListener('click', async ()=>{
+    if(!binaryArea.value) return;
+    try{
+      await navigator.clipboard.writeText(binaryArea.value);
+      alert('Binary copied to clipboard.');
+    }catch(e){
+      // fallback
+      binaryArea.select();
+      document.execCommand('copy');
+      alert('Binary copied to clipboard (fallback).');
+    }
+  });
+
+  saveBinBtn.addEventListener('click', ()=>{
+    if(!binaryArea.value) return;
+    const name = (currentFile && currentFile.name ? currentFile.name + '.binary.txt' : 'binary.txt');
+    const blob = new Blob([binaryArea.value],{type:'text/plain'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+  });
+
+  reconstructBtn.addEventListener('click', ()=>{
+    const bin = binaryArea.value.trim();
+    if(!bin){ alert('No binary available to reconstruct.'); return; }
+    const outName = reconName.value.trim() || (currentFile?currentFile.name:'reconstructed.bin');
+    try{
+      const bytes = binaryToUint8(bin);
+      const blob = new Blob([bytes]);
+      triggerDownload(blob, outName);
+    }catch(err){ alert('Failed to reconstruct: '+err.message); }
+  });
+
+  function binaryToUint8(binStr){
+    // Remove spaces and newlines but keep only 0/1
+    const cleaned = binStr.replace(/[^01]/g,'');
+    if(cleaned.length % 8 !== 0){
+      // pad the last byte with zeros on the right if needed
+      const pad = 8 - (cleaned.length % 8);
+      console.warn('Binary length not multiple of 8 — padding with '+pad+' zeros.');
+      binStr = cleaned + '0'.repeat(pad);
+    }else{
+      binStr = cleaned;
+    }
+    const byteCount = binStr.length / 8;
+    const arr = new Uint8Array(byteCount);
+    for(let i=0;i<byteCount;i++){
+      const byte = binStr.slice(i*8, i*8+8);
+      arr[i] = parseInt(byte,2);
+    }
+    return arr;
+  }
+
+  function triggerDownload(blob, filename){
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = filename || 'file.bin'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+    alert('File reconstructed and saved to your device (download started).');
+  }
+
+  clearBtn.addEventListener('click', ()=>{
+    currentFile = null; currentBinary = ''; fileInput.value=''; fileNameEl.textContent='No file'; fileSizeEl.textContent=''; binaryArea.value=''; pasteArea.value=''; reconName.value=''; toBinaryBtn.disabled=true; copyBinBtn.disabled=true; saveBinBtn.disabled=true;
+  });
+
+  // Paste/load area handlers
+  loadBinBtn.addEventListener('click', ()=>{
+    loadBin.click();
+  });
+  loadBin.addEventListener('change', async (e)=>{
+    if(!e.target.files.length) return; const f = e.target.files[0];
+    try{ const txt = await f.text(); pasteArea.value = txt; alert('Binary file loaded into textarea.'); }catch(err){ alert('Failed to read binary file: '+err.message); }
+  });
+
+  convertPasteBtn.addEventListener('click', ()=>{
+    const bin = pasteArea.value.trim(); if(!bin){ alert('Paste or load binary first.'); return; }
+    const outName = reconName.value.trim() || 'reconstructed.bin';
+    try{
+      const bytes = binaryToUint8(bin);
+      const blob = new Blob([bytes]);
+      triggerDownload(blob, outName);
+    }catch(err){ alert('Failed to reconstruct from pasted binary: '+err.message); }
+  });
+
+  // Keep UI usable on long text by preventing freeze (basic safety)
+  // Note: very large files may still be slow or exceed browser memory.
+</script>
+</body>
+</html>
